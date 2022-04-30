@@ -5,7 +5,10 @@ import * as cookie from 'cookie';
 import { parse as parseQuery } from 'qs';
 import { Parameters } from 'bath-es5/_/types';
 import { PickVersionElement } from './backend';
-import Ajv from 'ajv';
+import Ajv, { AnySchema } from 'ajv';
+import ajvFormats from 'ajv-formats';
+import parser from 'xml2json';
+import { AnyValidateFunction } from 'ajv/dist/core';
 
 // alias Document to OpenAPIV3_1.Document
 type Document = OpenAPIV3_1.Document | OpenAPIV3.Document;
@@ -40,10 +43,10 @@ export interface Request {
     [key: string]: ParamValue | ParamValue[];
   };
   query?:
-    | {
-        [key: string]: ParamValue | ParamValue[];
-      }
-    | string;
+  | {
+    [key: string]: ParamValue | ParamValue[];
+  }
+  | string;
   body?: any;
 }
 
@@ -265,19 +268,33 @@ export class OpenAPIRouter<D extends Document = Document> {
    * @export
    * @param {Request} req
    * @param {Operation<D>} [operation]
-   * @param {string} [patbh]
    * @returns {ParsedRequest}
    */
   public parseRequest(req: Request, operation?: Operation<D>): ParsedRequest {
+    const ajv = new Ajv({ coerceTypes: 'array' });
+    ajvFormats(ajv);
     let requestBody = req.body;
-    if (req.body && typeof req.body !== 'object') {
-      try {
-        // attempt to parse json
-        requestBody = JSON.parse(req.body.toString());
-      } catch {
-        // suppress json parsing errors
-        // we will emit error if validation requires it later
+    const specifiedContent = req.headers['accept'];
+
+    // Coerce body to correct schema.
+    try {
+      if (operation?.requestBody) {
+        const bodySchema = operation?.requestBody as PickVersionElement<D, OpenAPIV3.ParameterObject, OpenAPIV3_1.ParameterObject>;
+        let coerceData: AnyValidateFunction;
+        if (specifiedContent) {
+          coerceData = ajv.compile(bodySchema.content![specifiedContent.toString()]?.schema as AnySchema);
+        } else {
+          const firstContent = Object.keys(bodySchema.content!)[0];
+          coerceData = ajv.compile(bodySchema.content![firstContent]?.schema as AnySchema);
+        }
+        if (specifiedContent === 'application/xml') {
+          requestBody = parser.toJson(requestBody, { object: true });
+        }
+        coerceData(requestBody);
       }
+    } catch (err) {
+      // suppress json parsing errors
+      // we will emit error if validation requires it later
     }
 
     // header keys are converted to lowercase, so Content-Type becomes content-type
@@ -336,7 +353,6 @@ export class OpenAPIRouter<D extends Document = Document> {
 
               // If a schema is specified use Ajv type coercion.
               if (parameter.schema) {
-                const ajv = new Ajv({ coerceTypes: 'array' });
                 /**
                  * The full representation of the desired schema.
                  * This allows for short-hand inputs of types like `type: integer`
@@ -367,9 +383,14 @@ export class OpenAPIRouter<D extends Document = Document> {
                   };
                   queryData = { [queryParam]: coerced[queryParam] };
                 }
-                const coerceData = ajv.compile(parseSchema);
+                try {
+                  // Attempt to parse schema
+                  const coerceData = ajv.compile(parseSchema);
+                  coerceData(queryData);
+                } catch (error) {
+                  // Unknown format specified.
+                }
                 // Set `queryData` to the type coerced value(s).
-                coerceData(queryData);
                 if (isArray && specifiedSchemaType !== 'array') {
                   // Set the query array to the type-coerced array.
                   coerced[queryParam] = queryData;

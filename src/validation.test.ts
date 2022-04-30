@@ -21,23 +21,6 @@ const meta: OpenAPIV3_1.Document = {
   paths: {},
 };
 
-const validBTree = {
-  left: {
-    left: null,
-    right: null,
-    value: 0,
-  },
-  right: {
-    left: null,
-    right: {
-      left: null,
-      right: null,
-      value: 3,
-    },
-    value: 2,
-  },
-  value: 1,
-};
 const invalidBTree = {
   left: null,
   right: null,
@@ -442,7 +425,9 @@ describe.each([{}, { lazyCompileValidators: true }])('OpenAPIValidator with opts
                         schema: petSchema,
                       },
                       'application/xml': {
-                        example: '<Pet><name>string</name></Pet>',
+                        schema: {
+                          ...petSchema,
+                        },
                       },
                     },
                   },
@@ -480,16 +465,6 @@ describe.each([{}, { lazyCompileValidators: true }])('OpenAPIValidator with opts
         expect(valid.errors).toBeFalsy();
       });
 
-      test('passes validation for POST /trees with tree of numbers (recursive structure)', async () => {
-        const valid = validator.validateRequest({
-          path: '/trees',
-          method: 'post',
-          headers,
-          body: validBTree,
-        });
-        expect(valid.errors).toBeFalsy();
-      });
-
       test('fails validation for POST /trees with tree of strings (recursive structure)', async () => {
         const valid = validator.validateRequest({
           path: '/trees',
@@ -497,7 +472,7 @@ describe.each([{}, { lazyCompileValidators: true }])('OpenAPIValidator with opts
           headers,
           body: invalidBTree,
         });
-        expect(valid.errors).toHaveLength(1);
+        expect(valid.errors).toHaveLength(2);
       });
 
       test('passes validation for POST /pets with nullable age', async () => {
@@ -554,18 +529,38 @@ describe.each([{}, { lazyCompileValidators: true }])('OpenAPIValidator with opts
           body: '<XML>',
           headers,
         });
-        expect(valid.errors).toHaveLength(2);
-        expect(valid.errors && valid.errors[0].keyword).toBe('parse');
+        expect(valid.errors).toHaveLength(1);
+        expect(valid.errors && valid.errors[0].keyword).toBe('type');
+      });
+
+      test('fails non-json data when application/json is not the only allowed media type and the media type is not specified', async () => {
+        const valid = validator.validateRequest({
+          path: '/pets',
+          method: 'put',
+          body: '<name>string</name>',
+          headers: {},
+        });
+        expect(valid.errors).toBeTruthy();
       });
 
       test('allows non-json data when application/json is not the only allowed media type', async () => {
         const valid = validator.validateRequest({
           path: '/pets',
           method: 'put',
-          body: '<XML>',
-          headers,
+          body: '<name>string</name>',
+          headers: { accept: 'application/xml' },
         });
         expect(valid.errors).toBeFalsy();
+      });
+
+      test('fails validation for xml data when application/xml is the content type but the body is invalid', async () => {
+        const valid = validator.validateRequest({
+          path: '/pets',
+          method: 'put',
+          body: '<arbitrary>string</arbitrary>',
+          headers: { accept: 'application/xml' },
+        });
+        expect(valid.errors).toBeTruthy();
       });
     });
   });

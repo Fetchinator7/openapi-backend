@@ -53,6 +53,15 @@ const queryOwnerFilter: OpenAPIV3_1.ParameterObject = {
   },
 };
 
+const queryAddedAfter: OpenAPIV3_1.ParameterObject = {
+  name: 'added_after',
+  in: 'query',
+  schema: {
+    type: 'string',
+    format: 'date-time',
+  },
+};
+
 const queryFilter: OpenAPIV3_1.ParameterObject = {
   name: 'filter',
   in: 'query',
@@ -131,7 +140,7 @@ const definition: OpenAPIV3_1.Document = {
         operationId: 'getPetHobbies',
         responses,
       },
-      parameters: [pathId, hobbyId, queryLimit, ownerHeader],
+      parameters: [pathId, hobbyId, queryLimit, ownerHeader, queryAddedAfter],
     },
     '/pets/meta': {
       get: {
@@ -157,7 +166,7 @@ describe('OpenAPIRouter', () => {
       expect(parsedRequest.headers).toEqual(headers);
     });
 
-    test('parses request body passed as object', () => {
+    test('parses request body passed as object (remains unmodified since no body schema is specified)', () => {
       const payload = { horse: 1 };
       const request = { path: '/pets', method: 'post', body: payload, headers };
 
@@ -166,13 +175,13 @@ describe('OpenAPIRouter', () => {
       expect(parsedRequest.requestBody).toEqual(payload);
     });
 
-    test('parses request body passed as JSON string', () => {
+    test('parses request body and is unmodified when no request body schema is specified', () => {
       const payload = { horse: 1 };
       const request = { path: '/pets', method: 'post', body: JSON.stringify(payload), headers };
 
       const parsedRequest = api.parseRequest(request);
 
-      expect(parsedRequest.requestBody).toEqual(payload);
+      expect(parsedRequest.requestBody).toEqual(JSON.stringify(payload));
     });
 
     test('parses path parameters', () => {
@@ -318,16 +327,16 @@ describe('OpenAPIRouter', () => {
 
     test('parses path parameters and query parameters /pets/{id}/hobbies/{hobbyId}?limit', async () => {
       const request = {
-        path: '/pets/1/hobbies/3?limit=5',
+        path: '/pets/1/hobbies/3?limit=5&added_after=2022-04-12T23:20:50.52Z',
         method: 'get',
         headers: { ...headers, 'has-owner': 'false' },
-        parameters: [pathId, hobbyId, queryLimit, ownerHeader],
+        parameters: [pathId, hobbyId, queryLimit, ownerHeader, queryAddedAfter],
       };
       const operation = api.getOperation('getPetHobbies');
 
       const parsedRequest = api.parseRequest(request, operation);
       expect(parsedRequest.headers).toEqual({ ...headers, 'has-owner': false });
-      expect(parsedRequest.query).toEqual({ limit: 5 });
+      expect(parsedRequest.query).toEqual({ added_after: '2022-04-12T23:20:50.52Z', limit: 5 });
       expect(parsedRequest.params).toEqual({ hobbyId: 3, id: 1 });
     });
   });

@@ -1,9 +1,12 @@
 import * as _ from 'lodash';
-import Ajv, { Options as AjvOpts, ErrorObject, FormatDefinition, ValidateFunction } from 'ajv';
+import Ajv, { Options as AjvOpts, ErrorObject, FormatDefinition, ValidateFunction, AnySchema } from 'ajv';
 import type { OpenAPIV3, OpenAPIV3_1 } from 'openapi-types';
 import { OpenAPIRouter, Request, Operation } from './router';
 import OpenAPIUtils from './utils';
 import { PickVersionElement, SetMatchType } from './backend';
+import ajvFormats from 'ajv-formats';
+import parser from 'xml2json';
+import { AnyValidateFunction } from 'ajv/dist/core';
 
 // alias Document to OpenAPIV3_1.Document
 type Document = OpenAPIV3_1.Document | OpenAPIV3.Document;
@@ -75,6 +78,7 @@ function getBitRangeValidator(bits: number) {
 }
 
 // Formats defined by the OAS
+// const defaultFormats: { [Format in FormatName]: FormatDefinition<any> } = {
 const defaultFormats: Record<string, FormatDefinition<any>> = {
   int32: {
     // signed 32 bits
@@ -276,29 +280,34 @@ export class OpenAPIValidator<D extends Document = Document> {
       _.isNil,
     );
 
-    if (typeof req.body !== 'object' && req.body !== undefined) {
-      const payloadFormats = _.keys(_.get(operation, 'requestBody.content', {}));
-      if (payloadFormats.length === 1 && payloadFormats[0] === 'application/json') {
-        // check that JSON isn't malformed when the only payload format is JSON
-        try {
-          JSON.parse(`${req.body}`);
-        } catch (err) {
-          if (err instanceof Error) {
-            result.errors.push({
-              keyword: 'parse',
-              instancePath: '',
-              schemaPath: '#/requestBody',
-              params: [],
-              message: err.message,
-            });
-          }
-        }
-      }
-    }
+    try {
+      const ajv = new Ajv();
+      ajvFormats(ajv);
+      const specifiedContent = req.headers['accept'];
 
-    if (typeof requestBody === 'object' || headers['content-type'] === 'application/json') {
-      // include request body in validation if an object is provided
+      if (operation?.requestBody) {
+        const bodySchema = operation?.requestBody as PickVersionElement<D, OpenAPIV3.ParameterObject, OpenAPIV3_1.ParameterObject>;
+        let content: AnySchema;
+        if (specifiedContent) {
+          content = bodySchema.content![specifiedContent.toString()]?.schema as AnySchema;
+        } else {
+          const firstContent = Object.keys(bodySchema.content!)[0];
+          content = bodySchema.content![firstContent]?.schema as AnySchema;
+        }
+        const valid = ajv.validate(content, requestBody);
+        console.log(valid);
+      }
       parameters.requestBody = requestBody;
+    } catch (err) {
+      if (err instanceof Error) {
+        result.errors.push({
+          keyword: 'parse',
+          instancePath: '',
+          schemaPath: '#/requestBody',
+          params: [],
+          message: err.message,
+        });
+      }
     }
 
     // validate parameters against each pre-compiled schema
@@ -889,12 +898,18 @@ export class OpenAPIValidator<D extends Document = Document> {
     const ajvOpts = { ...this.ajvOpts, ...opts };
     const ajv = new Ajv(ajvOpts);
 
-    for (const [name, format] of Object.entries(defaultFormats)) {
-      ajv.addFormat(name, format);
+    const addFormats = (ajv: Ajv) => {
+      for (const [name, format] of Object.entries(defaultFormats)) {
+        ajv.addFormat(name, format);
+      }
     }
 
     if (this.customizeAjv) {
+      addFormats(ajv);
       return this.customizeAjv(ajv, ajvOpts, validationContext);
+    } else {
+      ajvFormats(ajv);
+      addFormats(ajv);
     }
     return ajv;
   }
